@@ -65,19 +65,6 @@ properties:
 Initial materials: `Air (opaque = false, hardness N/A)`, `Dirt (hardness 0.0)`,
 `Brick (hardness 1.0)`, `Wood (hardness ~0.5, see below)`.
 
-### Open question: per-voxel direction (wood)
-
-Wood voxels connecting diagonally (to allow thin branches) may eventually
-need a direction/orientation so branches can pack closer together and read
-correctly as thin cylinders rather than blobs. This is **not implemented in
-this first pass** — it's called out because it affects the data model. To
-avoid a big refactor later, the voxel storage should leave room for optional
-per-material auxiliary data (e.g. a side-table keyed by voxel position, or an
-`Option<Direction>` field) without forcing every material to carry a
-direction it doesn't need. Other materials (dirt, brick) explicitly do *not*
-get directions — orientation-free building is a deliberate usability
-constraint for the player.
-
 ## Meshing Strategy
 
 All meshers consume the same voxel grid and produce the same intermediate
@@ -87,11 +74,18 @@ and comparable side-by-side in the demo scene.
 We build **one shared Dual Contouring skeleton**: for every 2×2×2 cell of
 voxel corners that has a sign change (some corners "inside", some "outside"
 relative to the air/solid threshold), compute edge-crossing points via
-`weight` interpolation, then place one vertex per active cell and quad it
-between adjacent active cells (standard DC connectivity). What differs
-between the three meshers is **how the cell vertex position is computed** —
-this replaces the Hermite normal data classic DC relies on (which we don't
-have, since our voxels have no direction/gradient data by design):
+`weight` interpolation, group the cell's opaque corners into connected
+components (two corners connect if they share a real cube edge; a diagonal
+touch — no shared edge — only connects them if *both* voxels' materials have
+`diagonal_bridging` set, see below), then place one vertex **per component**
+and quad it between adjacent cells' vertices (standard DC connectivity). In
+the overwhelmingly common case a cell's opaque corners are already one
+connected blob, so this reduces to "one vertex per active cell"; it only
+produces more than one when a cell's solid region is genuinely disconnected
+(e.g. two voxels touching only diagonally). What differs between the three
+meshers is **how each component's vertex position is computed** — this
+replaces the Hermite normal data classic DC relies on (which we don't have,
+since our voxels have no direction/gradient data by design):
 
 1. **Averaging (Surface-Nets-style):** vertex = average of all edge-crossing
    points for that cell. No normal information used. This is smooth and
@@ -116,6 +110,30 @@ have, since our voxels have no direction/gradient data by design):
    reduces exactly to mesher 1, `hardness = 1` reduces exactly to mesher 2.
    This is the mesher actually used for mixed-material terrain.
 
+**Known limitation, deferred: coincident (not intersecting) vertices from
+different components.** A cell whose opaque corners split into multiple
+connected components (see `PLAN.md` milestone 7 — `opaque_components`, added
+after this doc was written, to fix a crack at exactly this kind of
+diagonal-touching cell) gives each component its own vertex — but meshers 2
+and 3 can place two *different* components' vertices at the *exact same
+point*, not just close together.
+`axis_aligned_dc` computes each axis independently from that axis's own
+crossings alone, with no cell-wide averaging pulling it back toward its own
+corner; at `weight = 1.0`, an isolated corner's vertex lands exactly on the
+cell's geometric centre. By the cube's symmetry, *every* corner in a
+maximally-split cell (the 4-component "checkerboard" case, where the opaque
+corners are a full parity-class of the cube) lands at that same centre point
+when every contributing voxel is full-weight — confirmed algebraically, not
+just observed. The same coincidence happens for the ordinary 2-component
+diagonal-saddle case too. This doesn't produce crossing/self-intersecting
+triangles (each component's own quads stay locally well-formed) — just
+multiple, physically unrelated components' geometry meeting at one shared
+point instead of staying visibly separate. `surface_nets` (mesher 1) doesn't
+have this issue, since its whole-crossing average stays anchored near its
+own corner regardless of weight. Not addressed yet; revisit if it turns out
+to matter visually (most likely to show up with brick, or hardness-blend at
+high hardness, on diagonal-touching geometry).
+
 **Vertex normals for shading** are a separate concern from the vertex
 *position* math above and don't need to reuse the axis-aligned QEF normals.
 For this pass, just compute simple flat per-face normals (cross product of
@@ -125,34 +143,41 @@ vertex on a face shares one normal, which needs either vertex duplication or
 a shader-side trick) is a deliberate future exploration, not part of this
 pass.
 
-Thin/detailed features (branches): a standard DC cell already spans a 2×2×2
-block of voxel centres, so two voxels touching only diagonally (sharing a
-cell without sharing a face) already land in a common cell and get bridged
-by the normal cell-vertex/quad logic — no special-cased neighbour sampling
-should be required just to get a mesh to form across a diagonal join. The
-open question is purely about *shape*: whether diagonal branch joints look
-acceptably thin/branch-like out of the box, or whether they need the
-per-voxel wood direction mentioned below to avoid reading as blobby. Treat
-that as something to evaluate empirically after mesher 1 is working on a
-hand-authored branch test shape, not something to pre-build.
+**Thin/detailed features (branches):** resolved via
+`MaterialProperties::diagonal_bridging` (`true` only for `wood`) — two
+voxels of a bridging material that touch only diagonally (no shared face)
+are grouped into one connected component instead of splitting (which is
+what non-bridging materials correctly do at the same configuration — the
+diagonal-saddle fix, see `PLAN.md` milestone 7), so they share one vertex
+and the branch reads as continuous rather than showing a gap. The tradeoff:
+that shared vertex still narrows the join to nearly a single point/line,
+since there's no actual voxel data *between* the two diagonal voxels to
+give it real width. A mesher that faked extra volume at these joins (a
+small connecting cylinder, cloned from mesher 3) was prototyped and worked,
+but was reverted in favour of this simpler bridging-only behaviour for
+now — no per-voxel direction/orientation data was needed after all.
 
 ## Debug Tooling
 
-Two debug-only visualizations, both reading directly from the voxel grid
+Three debug-only visualizations, all reading directly from the voxel grid
 (bypassing the mesh pipeline) so they're useful for verifying data
 independent of meshing bugs:
 
 - **Sphere-per-voxel:** a sphere at the centre of every non-air voxel, radius
-  scaled by `weight` from the start (cheap, and it's the main thing this view
-  exists to show). Good for eyeballing raw grid state independent of any
+  scaled by `weight`. Good for eyeballing raw grid state independent of any
   mesher.
 - **Cube-per-voxel:** a unit cube at each voxel, solid/transparent/wireframe,
   toggle-able. Not optimized (no greedy meshing/culling) — it's explicitly a
   debug tool, not a renderer.
+- **Cube-per-active-cell:** a wireframe cube at every Dual-Contouring cell
+  that will place at least one vertex — the *dual* grid, offset by half a
+  unit from the voxel cubes above (a cell's own corners are voxel
+  positions). Useful for seeing exactly which cell an ambiguous/split
+  configuration lands in.
 
-Both are driven by a small set of flags (a Bevy `Resource`, defaulted from
-consts) so they can be tuned without hunting through code, at the cost of a
-recompile for now.
+All three are driven by a small set of flags (a Bevy `Resource`, defaulted
+from consts) so they can be tuned without hunting through code, at the cost
+of a recompile for now.
 
 ## Code Organization
 
@@ -160,13 +185,16 @@ Hard separation between voxel/meshing *logic* and *Bevy-specific* glue, so
 the algorithms are independently testable and reusable if the rendering
 backend ever changes:
 
-- `voxel_core` — no Bevy dependency. Voxel/material types, the dense grid
-  storage, and all mesher implementations. Produces plain
-  position/normal/index buffers ("Triangle"/"MeshData" structs of our own),
-  never a `bevy::render::mesh::Mesh`.
-- Bevy application crate/module — camera/flycam, converts `voxel_core`
-  mesh output into real `bevy::render::mesh::Mesh` + `Handle<StandardMaterial>`
-  entities, debug gizmo/cube rendering, demo scene assembly, input-driven
-  debug flags.
+- `src/core/` — no Bevy dependency. Voxel/material types, dense grid
+  storage, `MeshData`, demo/test grid generators, and all mesher
+  implementations (`meshing/`). Produces plain position/normal/index
+  buffers, never a `bevy::render::mesh::Mesh`.
+- `src/render/` — Bevy-specific glue: fly camera, converts `core::MeshData`
+  output into real `bevy::render::mesh::Mesh` + `Handle<StandardMaterial>`
+  entities, the three debug renderers above, `VoxelGridComponent`/
+  `MesherChoice` ECS wiring.
+- `src/main.rs` / `src/config.rs` — app setup, demo scene assembly,
+  debug/tuning flags.
 
-See `PLAN.md` for how this is split into files and build order.
+Single Cargo binary crate, not a workspace split — see `PLAN.md` for the
+exact file tree.

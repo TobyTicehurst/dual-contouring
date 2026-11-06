@@ -4,13 +4,13 @@
 
 use glam::Vec3;
 
-use crate::core::grid::VoxelGrid;
 use crate::core::mesh_data::MeshData;
 use crate::core::voxel::MaterialTable;
+use crate::core::voxel_source::VoxelSource;
 
 use super::common::{mesh_with, Cell};
 
-pub fn mesh(grid: &VoxelGrid, materials: &MaterialTable) -> MeshData {
+pub fn mesh(grid: &dyn VoxelSource, materials: &MaterialTable) -> MeshData {
     mesh_with(grid, materials, place_vertex)
 }
 
@@ -25,6 +25,7 @@ pub fn place_vertex(cell: &Cell) -> Vec3 {
 mod tests {
     use super::*;
     use crate::core::demo_scenes;
+    use crate::core::grid::VoxelGrid;
     use crate::core::voxel::{MaterialId, Voxel};
     use glam::{IVec3, UVec3};
 
@@ -94,21 +95,16 @@ mod tests {
     /// Two opaque voxels touching only diagonally (with the other two
     /// corners of that shared face left as air) is the classic "ambiguous
     /// face" / saddle-point configuration from isosurface extraction. This
-    /// is a *known, inherent* limitation of "naive" Surface Nets, not a bug
-    /// specific to this implementation: the winding-selection rule used
-    /// here — flip the whole quad based on which side of a sign-changing
-    /// edge is opaque — is the same one used by the well-established
-    /// `fast-surface-nets` / `building-blocks` crates, and it produces the
-    /// same inconsistency there (verified by hand against their
-    /// `maybe_make_quad`). Properly resolving it needs either real Hermite
-    /// data (a QEF solve, the thing mesher 1 deliberately doesn't use) or a
-    /// Marching-Cubes-style asymptotic decider to make adjacent cells agree
-    /// on the ambiguous face — out of scope for this pass. This test exists
-    /// to document the behaviour, not to lock in that it's broken forever:
-    /// if this ever starts failing because someone's improved the winding
-    /// logic, that's a good thing — loosen or delete it then.
+    /// *used* to crack under naive Surface Nets: the single Dual-Contouring
+    /// cell straddling both voxels put all 6 of their edge crossings through
+    /// one shared vertex, forcing two genuinely disjoint surface patches
+    /// through a single point. It's now fixed by `common::opaque_components`
+    /// (grouping a cell's crossings by which connected component of opaque
+    /// corners they belong to, and giving each component its own vertex) —
+    /// see `common::build_cell_group`. This test now asserts the fix instead
+    /// of documenting the crack.
     #[test]
-    fn diagonal_saddle_is_a_known_naive_limitation() {
+    fn diagonal_saddle_is_resolved_by_component_splitting() {
         let mut grid = VoxelGrid::new(UVec3::new(4, 3, 4));
         grid.set(IVec3::new(1, 1, 1), Voxel::new(1.0, MaterialId::DIRT));
         grid.set(IVec3::new(2, 1, 2), Voxel::new(1.0, MaterialId::DIRT));
@@ -117,9 +113,35 @@ mod tests {
         let mesh_data = mesh(&grid, &materials);
 
         assert!(!mesh_data.positions.is_empty());
-        assert!(
-            count_non_manifold_edges(&mesh_data) > 0,
-            "expected the known diagonal-saddle crack; if this fails, the winding logic got better!"
-        );
+        assert_eq!(count_non_manifold_edges(&mesh_data), 0);
+    }
+
+    /// The mirror image of the case above — a solid 2x2x2 block missing the
+    /// same diagonal pair of corners instead of consisting of only them —
+    /// stays watertight even without any special handling: unlike the
+    /// all-opaque-corners-disjoint case, the *opaque* region here is a
+    /// single connected blob (each air corner reaches it directly), so the
+    /// true surface really is one connected saddle-shaped patch — which a
+    /// single shared vertex can represent validly. Component splitting only
+    /// needs to trigger when the *opaque* side is what's disconnected.
+    #[test]
+    fn mirrored_diagonal_air_case_was_never_actually_ambiguous() {
+        let mut grid = VoxelGrid::new(UVec3::new(4, 4, 4));
+        for &p in &[
+            IVec3::new(2, 1, 1),
+            IVec3::new(1, 1, 2),
+            IVec3::new(1, 2, 1),
+            IVec3::new(2, 2, 1),
+            IVec3::new(1, 2, 2),
+            IVec3::new(2, 2, 2),
+        ] {
+            grid.set(p, Voxel::new(1.0, MaterialId::DIRT));
+        }
+        let materials = MaterialTable::standard();
+
+        let mesh_data = mesh(&grid, &materials);
+
+        assert!(!mesh_data.positions.is_empty());
+        assert_eq!(count_non_manifold_edges(&mesh_data), 0);
     }
 }

@@ -5,6 +5,7 @@
 use glam::{IVec3, UVec3};
 
 use super::voxel::Voxel;
+use super::voxel_source::VoxelSource;
 
 /// A dense, fixed-size 3D grid of voxels, indexed by local grid coordinates
 /// `0..size` in each axis. World placement (if any) is the caller's concern
@@ -56,6 +57,16 @@ impl VoxelGrid {
             return None;
         }
         Some(((z * self.size.y + y) * self.size.x + x) as usize)
+    }
+}
+
+impl VoxelSource for VoxelGrid {
+    fn get(&self, pos: IVec3) -> Voxel {
+        VoxelGrid::get(self, pos)
+    }
+
+    fn size(&self) -> UVec3 {
+        VoxelGrid::size(self)
     }
 }
 

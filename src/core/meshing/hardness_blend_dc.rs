@@ -8,18 +8,18 @@
 
 use glam::Vec3;
 
-use crate::core::grid::VoxelGrid;
 use crate::core::mesh_data::MeshData;
 use crate::core::voxel::MaterialTable;
+use crate::core::voxel_source::VoxelSource;
 
 use super::common::{mesh_with, Cell};
 use super::{axis_aligned_dc, surface_nets};
 
-pub fn mesh(grid: &VoxelGrid, materials: &MaterialTable) -> MeshData {
+pub fn mesh(grid: &dyn VoxelSource, materials: &MaterialTable) -> MeshData {
     mesh_with(grid, materials, place_vertex)
 }
 
-fn place_vertex(cell: &Cell) -> Vec3 {
+pub fn place_vertex(cell: &Cell) -> Vec3 {
     let averaged = surface_nets::place_vertex(cell);
     let axis_aligned = axis_aligned_dc::place_vertex(cell);
     averaged.lerp(axis_aligned, cell.hardness)
@@ -29,6 +29,7 @@ fn place_vertex(cell: &Cell) -> Vec3 {
 mod tests {
     use super::*;
     use crate::core::demo_scenes;
+    use crate::core::grid::VoxelGrid;
     use crate::core::meshing::common::build_cell;
     use crate::core::voxel::{MaterialId, Voxel};
     use glam::{IVec3, UVec3};
@@ -91,5 +92,27 @@ mod tests {
 
         assert!(!mesh_data.positions.is_empty());
         assert_eq!(mesh_data.positions.len(), mesh_data.indices.len());
+    }
+
+    /// The actual visible payoff of Roadmap phase B: a mesh spanning a
+    /// material boundary (dirt/brick, see `demo_scenes::mixed_hardness_block`)
+    /// should carry a real per-vertex colour gradient across that seam, not
+    /// one flat colour for the whole mesh — i.e. more than one distinct
+    /// colour shows up among its vertices.
+    #[test]
+    fn mixed_hardness_block_mesh_has_more_than_one_vertex_colour() {
+        let grid = demo_scenes::mixed_hardness_block(8, 4, 4);
+        let materials = MaterialTable::standard();
+
+        let mesh_data = mesh(&grid, &materials);
+
+        assert_eq!(mesh_data.colors.len(), mesh_data.positions.len());
+        let first = mesh_data.colors[0];
+        assert!(
+            mesh_data.colors.iter().any(|c| (c.r - first.r).abs() > 1e-6
+                || (c.g - first.g).abs() > 1e-6
+                || (c.b - first.b).abs() > 1e-6),
+            "expected more than one distinct vertex colour across a dirt/brick boundary"
+        );
     }
 }

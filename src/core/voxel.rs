@@ -79,6 +79,16 @@ pub struct MaterialProperties {
     pub opaque: bool,
     /// `0.0` = fully smooth (dirt), `1.0` = fully rectilinear (brick).
     pub hardness: f32,
+    /// Whether two voxels of this material that touch only diagonally (no
+    /// shared face) should still mesh as one connected surface, instead of
+    /// each getting their own separate patch. Meshing normally treats a
+    /// cell's opaque corners as connected only when a path of real grid
+    /// edges between them stays opaque the whole way (see
+    /// `meshing::common::opaque_components`) — correct in general, but wrong
+    /// for materials meant to read as thin connected structures (`wood`'s
+    /// branches) where a diagonal step is the norm, not an ambiguous edge
+    /// case. `true` only for `wood` today.
+    pub diagonal_bridging: bool,
     pub color: Color,
 }
 
@@ -99,24 +109,28 @@ impl MaterialTable {
             name: "air",
             opaque: false,
             hardness: 0.0,
+            diagonal_bridging: false,
             color: Color::rgb(0.0, 0.0, 0.0),
         });
         table.push(MaterialProperties {
             name: "dirt",
             opaque: true,
             hardness: 0.0,
+            diagonal_bridging: false,
             color: Color::rgb(0.45, 0.31, 0.19),
         });
         table.push(MaterialProperties {
             name: "brick",
             opaque: true,
             hardness: 1.0,
+            diagonal_bridging: false,
             color: Color::rgb(0.65, 0.24, 0.20),
         });
         table.push(MaterialProperties {
             name: "wood",
             opaque: true,
             hardness: 0.5,
+            diagonal_bridging: true,
             color: Color::rgb(0.36, 0.25, 0.14),
         });
         table

@@ -4,11 +4,10 @@
 
 use bevy::prelude::*;
 use bevy::render::render_resource::Face;
-use glam::IVec3;
 
 use crate::config::DebugConfig;
+use crate::core::mesh_data::MeshData;
 use crate::core::meshing::{axis_aligned_dc, hardness_blend_dc, reference_surface_nets, surface_nets};
-use crate::core::voxel::MaterialId;
 
 use super::mesh_convert::to_bevy_mesh;
 use super::voxel_data::{MaterialTableResource, VoxelGridComponent};
@@ -55,47 +54,49 @@ fn spawn_meshed_views(
             MesherChoice::ReferenceSurfaceNets => reference_surface_nets::mesh(grid, &material_table.0),
         };
 
-        // Still just the first non-air voxel's colour for the whole mesh —
-        // fine for every demo grid so far, including the hardness-blend one
-        // (which mixes materials, but the colour mismatch is a much smaller
-        // issue than getting the *shape* blend right). Real per-vertex
-        // colour is coming with the milestone 11 demo scene, which actually
-        // needs it (three materials genuinely need to be told apart).
-        let size = grid.size();
-        let base_color = 'search: {
-            for x in 0..size.x {
-                for y in 0..size.y {
-                    for z in 0..size.z {
-                        let voxel = grid.get(IVec3::new(x as i32, y as i32, z as i32));
-                        if voxel.material != MaterialId::AIR {
-                            let color = material_table.0.get(voxel.material).color;
-                            break 'search Color::srgb(color.r, color.g, color.b);
-                        }
-                    }
-                }
-            }
-            Color::WHITE
-        };
-
-        let bevy_mesh = meshes.add(to_bevy_mesh(&mesh_data));
-        // `cull_mode: None` renders both sides of every triangle instead of
-        // the default back-face culling; `double_sided` tells Bevy's
-        // lighting to flip the shading normal for back-facing fragments so
-        // the far side isn't lit as if it were the front. Both driven by the
-        // same config flag since one without the other looks wrong (either
-        // culled, or lit incorrectly).
-        let cull_mode = if config.render_backfaces { None } else { Some(Face::Back) };
-        commands.entity(entity).with_children(|parent| {
-            parent.spawn((
-                Mesh3d(bevy_mesh),
-                MeshMaterial3d(materials.add(StandardMaterial {
-                    base_color,
-                    cull_mode,
-                    double_sided: config.render_backfaces,
-                    ..default()
-                })),
-                Transform::IDENTITY,
-            ));
-        });
+        spawn_mesh_child(&mut commands, entity, &mesh_data, Transform::IDENTITY, (), &config, &mut meshes, &mut materials);
     }
+}
+
+/// Converts `mesh_data` to a real `bevy::Mesh` (including its per-vertex
+/// colour — see `docs/PLAN.md` Roadmap phase B) and spawns it as a child of
+/// `parent` at `transform`, with `config.render_backfaces` applied, plus
+/// whatever extra components `extra` bundles in (e.g. `chunk_mesh_view`
+/// attaches a `ChunkCoordComponent`; `()` for none). The spawned material's
+/// `base_color` is left white so the mesh's own per-vertex colour shows
+/// through unmodified (a coloured `base_color` would tint it). Shared by
+/// `voxel_mesh_view` and `chunk_mesh_view` so the mesh-conversion/material-
+/// setup logic isn't duplicated per caller.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn spawn_mesh_child(
+    commands: &mut Commands,
+    parent: Entity,
+    mesh_data: &MeshData,
+    transform: Transform,
+    extra: impl Bundle,
+    config: &DebugConfig,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+) {
+    let bevy_mesh = meshes.add(to_bevy_mesh(mesh_data));
+    // `cull_mode: None` renders both sides of every triangle instead of the
+    // default back-face culling; `double_sided` tells Bevy's lighting to
+    // flip the shading normal for back-facing fragments so the far side
+    // isn't lit as if it were the front. Both driven by the same config flag
+    // since one without the other looks wrong (either culled, or lit
+    // incorrectly).
+    let cull_mode = if config.render_backfaces { None } else { Some(Face::Back) };
+    commands.entity(parent).with_children(|parent| {
+        parent.spawn((
+            Mesh3d(bevy_mesh),
+            MeshMaterial3d(materials.add(StandardMaterial {
+                base_color: Color::WHITE,
+                cull_mode,
+                double_sided: config.render_backfaces,
+                ..default()
+            })),
+            transform,
+            extra,
+        ));
+    });
 }

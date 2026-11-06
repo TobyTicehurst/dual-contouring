@@ -7,13 +7,13 @@
 
 use glam::Vec3;
 
-use crate::core::grid::VoxelGrid;
 use crate::core::mesh_data::MeshData;
 use crate::core::voxel::MaterialTable;
+use crate::core::voxel_source::VoxelSource;
 
 use super::common::{mesh_with, Axis, Cell};
 
-pub fn mesh(grid: &VoxelGrid, materials: &MaterialTable) -> MeshData {
+pub fn mesh(grid: &dyn VoxelSource, materials: &MaterialTable) -> MeshData {
     mesh_with(grid, materials, place_vertex)
 }
 
@@ -60,6 +60,7 @@ fn set_component(v: &mut Vec3, axis: Axis, value: f32) {
 mod tests {
     use super::*;
     use crate::core::demo_scenes;
+    use crate::core::grid::VoxelGrid;
     use crate::core::meshing::common::EdgeCrossing;
     use crate::core::meshing::common::count_non_manifold_edges;
     use crate::core::voxel::{MaterialId, Voxel};
@@ -101,6 +102,7 @@ mod tests {
                 EdgeCrossing { position: Vec3::new(3.0, 0.5, 3.0), axis: Axis::Y },
             ],
             hardness: 0.0, // unused by this mesher; arbitrary placeholder
+            color: crate::core::voxel::Color::rgb(0.0, 0.0, 0.0), // unused by this mesher; arbitrary placeholder
         };
 
         let vertex = place_vertex(&cell);

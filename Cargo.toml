@@ -4,6 +4,12 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-bevy = "0.19.0"
+# `bevy_ci_testing` wires in `bevy_dev_tools::ci_testing::CiTestingPlugin` (part
+# of upstream Bevy, not project-specific code): reads a RON script of
+# frame-indexed events (move camera, take a named screenshot, exit) from the
+# file named by the `CI_TESTING_CONFIG` env var, so a screenshot can be
+# captured and the app closed again with no manual interaction. Inert with no
+# such file present, so safe to leave enabled for normal `cargo run`/`build`.
+bevy = { version = "0.19.0", features = ["bevy_ci_testing"] }
 fast-surface-nets = "0.2.1"
 glam = "0.32.1"

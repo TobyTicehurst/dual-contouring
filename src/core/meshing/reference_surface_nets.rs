@@ -20,9 +20,32 @@ use glam::{IVec3, Vec3};
 
 use crate::core::grid::VoxelGrid;
 use crate::core::mesh_data::MeshData;
-use crate::core::voxel::MaterialTable;
+use crate::core::voxel::{Color, MaterialId, MaterialTable};
+
+/// This adapter builds its own SDF directly from `grid`/`materials` rather
+/// than going through `common.rs`'s `Cell` abstraction, so it has no
+/// per-vertex material data to draw a real blend from (see
+/// `docs/PLAN.md` Roadmap phase B) — every vertex just gets the grid's
+/// first non-air voxel's colour instead, same flat-colour simplification
+/// `render::voxel_mesh_view` used before per-vertex colour existed. Fine
+/// here: every demo scene this mesher is used on is single-material.
+fn first_non_air_color(grid: &VoxelGrid, materials: &MaterialTable) -> Color {
+    let size = grid.size();
+    for x in 0..size.x {
+        for y in 0..size.y {
+            for z in 0..size.z {
+                let voxel = grid.get(IVec3::new(x as i32, y as i32, z as i32));
+                if voxel.material != MaterialId::AIR {
+                    return materials.get(voxel.material).color;
+                }
+            }
+        }
+    }
+    Color::rgb(1.0, 1.0, 1.0)
+}
 
 pub fn mesh(grid: &VoxelGrid, materials: &MaterialTable) -> MeshData {
+    let color = first_non_air_color(grid, materials);
     let size = grid.size();
     // 1-voxel padding on every side: matches our own out-of-bounds-is-Air
     // convention, and is required by fast_surface_nets itself (see its
@@ -64,7 +87,7 @@ pub fn mesh(grid: &VoxelGrid, materials: &MaterialTable) -> MeshData {
     for tri in buffer.indices.chunks_exact(3) {
         let p: [Vec3; 3] = std::array::from_fn(|i| Vec3::from(buffer.positions[tri[i] as usize]) - offset);
         let normal = (p[1] - p[0]).cross(p[2] - p[0]).normalize_or_zero();
-        mesh_data.push_triangle(p, normal);
+        mesh_data.push_triangle(p, normal, [color; 3]);
     }
 
     mesh_data

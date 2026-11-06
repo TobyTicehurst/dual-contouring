@@ -1,3 +1,6 @@
+pub mod broken_lod_demo;
+pub mod chunk_mesh_view;
+pub mod debug_active_cells;
 pub mod debug_cubes;
 pub mod debug_spheres;
 pub mod fly_camera;

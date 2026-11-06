@@ -129,13 +129,13 @@ pub fn voxel_sphere(radius: u32, material: MaterialId) -> VoxelGrid {
     grid
 }
 
-/// Two opaque voxels touching only diagonally, with the other two corners of
-/// their shared face left as air — the minimal case that triggers the
-/// "diagonal saddle" / ambiguous-face crack in mesher 1 (see
-/// `surface_nets.rs`'s `diagonal_saddle_is_a_known_naive_limitation` test,
-/// which this mirrors exactly). Visualising it directly, rather than only
-/// checking it in a unit test, makes the artifact easy to go find and look
-/// at when revisiting the winding logic.
+/// A 2x2 dirt floor with two more voxels stacked on top of it, touching only
+/// diagonally, the other two corners of their shared face left as air — the
+/// floor gives the pair something to visibly rest on. The top two voxels are
+/// the same "diagonal saddle" / ambiguous-face configuration exercised by
+/// `surface_nets.rs`'s `diagonal_saddle_is_resolved_by_component_splitting`
+/// test; visualising it directly, rather than only checking it in a unit
+/// test, makes it easy to go look at what the mesher does there.
 pub fn diagonal_saddle_pair() -> VoxelGrid {
     let mut grid = VoxelGrid::new(UVec3::new(4, 3, 4));
     grid.set(IVec3::new(1, 0, 1), Voxel::new(1.0, MaterialId::DIRT));
@@ -193,9 +193,9 @@ mod tests {
     }
 
     #[test]
-    fn diagonal_saddle_pair_has_exactly_the_two_diagonal_voxels() {
+    fn diagonal_saddle_pair_has_a_floor_and_the_two_diagonal_voxels() {
         let grid = diagonal_saddle_pair();
-        assert_eq!(count_non_air(&grid), 2);
+        assert_eq!(count_non_air(&grid), 6);
         assert_eq!(grid.get(IVec3::new(1, 1, 1)).material, MaterialId::DIRT);
         assert_eq!(grid.get(IVec3::new(2, 1, 2)).material, MaterialId::DIRT);
         // The other two corners of the shared face must stay air, or this
